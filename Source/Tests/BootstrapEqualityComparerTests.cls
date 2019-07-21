@@ -125,7 +125,18 @@ Public Function Run() As Long
     ReDim Long2(0 To 1, 0 To 1, 0 To 1)
     RunTest Equals_WithDefaultSettings_ReturnsExpected(Long1, Long2, False)
     RunTest Equals_WithDefaultSettings_ReturnsExpected(Long2, Long2, True)
+    RunTest Equals_WithDefaultSettings_ReturnsExpected(NewSimpleType(1, "hi"), NewSimpleType(2, "hi"), False)
+    RunTest Equals_WithDefaultSettings_ReturnsExpected(NewSimpleType(1, "hi"), NewSimpleType(1, "bye"), False)
+    RunTest Equals_WithDefaultSettings_ReturnsExpected(NewSimpleType(1, "hi"), NewSimpleType(1, "hi"), True)
+    RunTest Equals_WithDefaultSettings_ReturnsExpected(NewComplexType(3, NewSimpleType(1, "hi")), NewComplexType(3, NewSimpleType(1, "hi")), True)
+    RunTest Equals_WithDefaultSettings_ReturnsExpected(NewComplexType(2, NewSimpleType(1, "hi")), NewComplexType(3, NewSimpleType(1, "hi")), False)
+    RunTest Equals_WithDefaultSettings_ReturnsExpected(NewComplexType(3, NewSimpleType(1, "hi")), NewComplexType(3, NewSimpleType(1, "bye")), False)
     
+    Dim Complex As ComplexType
+    Complex = NewComplexType(3, NewSimpleType(1, "hi"))
+    ReDim Complex.DynamicSimples(1)
+    RunTest Equals_WithDefaultSettings_ReturnsExpected(Complex, NewComplexType(3, NewSimpleType(1, "hi")), False)
+        
     RunTest Equals_WithStrictSettings_ReturnsExpected(0, 0, True)
     RunTest Equals_WithStrictSettings_ReturnsExpected(0&, 0, False)
     RunTest Equals_WithStrictSettings_ReturnsExpected(0, 0&, False)
@@ -349,9 +360,8 @@ Private Function Equals_WithExternalComparer_ReturnsExpected(ByRef X As Variant,
 End Function
 
 
-
 '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
-'   IBootstrapTestClass Interface
+'   IBootstrapTestClass
 '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 Private Function IBootstrapTestClass_Run() As Long
     IBootstrapTestClass_Run = Run

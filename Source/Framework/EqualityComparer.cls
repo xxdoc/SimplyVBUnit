@@ -52,6 +52,8 @@ Private mAsCollection       As Boolean
 Private mTolerance          As Tolerance
 Private mExternalComparer   As IEqualityComparer
 Private mFailurePoints      As New Stack
+Private mTypePath           As New Stack
+Private mLevel              As Long
 
 
 Public Property Get Strict() As Boolean
@@ -99,6 +101,24 @@ Public Property Get FailurePoints() As Stack
 End Property
 
 Public Function Equals(ByRef X As Variant, ByRef Y As Variant) As Boolean
+    Equals = EqualsCore(X, Y)
+    
+    If Not Equals Then
+        If VarType(X) = vbUserDefinedType And VarType(Y) = vbUserDefinedType Then
+            mTypePath.Push TypeName(X)
+        End If
+    End If
+End Function
+
+Friend Property Get TypePath() As Stack
+    Set TypePath = mTypePath
+End Property
+
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Private Helpers
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Private Function EqualsCore(ByRef X As Variant, ByRef Y As Variant) As Boolean
     Dim Result As Boolean
     
     If IsArray(X) And IsArray(Y) Then
@@ -111,13 +131,9 @@ Public Function Equals(ByRef X As Variant, ByRef Y As Variant) As Boolean
         Result = mExternalComparer.Equals(X, Y)
     End If
     
-    Equals = Result
+    EqualsCore = Result
 End Function
 
-
-'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
-'   Private Helpers
-'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 Private Function EqualArrays(ByRef X As Variant, ByRef Y As Variant) As Boolean
     If Not mAsCollection Then
         If Not EqualArraySizes(X, Y) Then
@@ -159,14 +175,14 @@ Private Function EqualArrayBounds(ByRef X As Variant, ByRef Y As Variant) As Boo
 End Function
 
 Private Function EqualEnumerables(ByRef X As Variant, ByRef Y As Variant) As Boolean
-    Dim XEnumerator  As IEnumerator
-    Dim YEnumerator    As IEnumerator
+    Dim XEnumerator As IEnumerator
+    Dim YEnumerator As IEnumerator
     
     Set XEnumerator = GetEnumerator(X)
     Set YEnumerator = GetEnumerator(Y)
     
     Dim XHasMore As Boolean
-    Dim YHasMore   As Boolean
+    Dim YHasMore As Boolean
     
     Dim RetVal  As Boolean
     Dim Count   As Long
@@ -208,28 +224,24 @@ Private Function EqualValues(ByRef X As Variant, ByRef Y As Variant) As Boolean
         Select Case VarType(X)
             Case vbString
                 Result = EqualStrings(X, Y)
-                
             Case vbLong, vbInteger, vbByte, vbDouble, vbSingle, vbCurrency, vbDecimal
                 Result = EqualNumbers(X, Y)
-                
             Case vbObject, vbDataObject
                 Result = EqualObjects(X, Y)
-                
             Case vbBoolean
                 Result = EqualBooleans(X, Y)
-                
             Case vbDate
                 Result = EqualDates(X, Y)
-            
+            Case vbUserDefinedType
+                If VarType(Y) = vbUserDefinedType Then
+                    Result = EqualUdt(X, Y)
+                End If
             Case vbEmpty
                 Result = IsEmpty(Y)
-                
             Case vbNull
                 Result = IsNull(Y)
-                
             Case vbError
                 Result = (IsMissing(X) And IsMissing(Y))
-                
         End Select
     End If
     
@@ -306,6 +318,87 @@ Private Function EqualDates(ByRef X As Variant, ByRef Y As Variant) As Boolean
         
         EqualDates = (Difference <= Tolerance)
     End If
+End Function
+
+Private Function EqualUdt(ByRef ObjA As Variant, ByRef ObjB As Variant) As Boolean
+    Dim ObjARecord As IRecordInfo
+    Dim ObjBRecord As IRecordInfo
+    
+    ObjectPtr(ObjARecord) = MemLong(VarPtr(ObjA) + VARIANTRECORD_OFFSET)
+    ObjectPtr(ObjBRecord) = MemLong(VarPtr(ObjB) + VARIANTRECORD_OFFSET)
+    
+    On Error GoTo Catch
+    
+    If ObjARecord.IsMatchingType(ObjBRecord) Then
+        Dim FieldNameCount  As Long
+
+        ObjARecord.GetFieldNames FieldNameCount, ByVal vbNullPtr
+        
+        If FieldNameCount > 0 Then
+            Dim FieldNames()    As String
+            Dim ObjAPtr         As Long
+            Dim ObjBPtr         As Long
+            
+            ReDim FieldNames(0 To FieldNameCount - 1)
+            ObjARecord.GetFieldNames FieldNameCount, FieldNames(0)
+            ObjAPtr = MemLong(VarPtr(ObjA) + VARIANTDATA_OFFSET)
+            ObjBPtr = MemLong(VarPtr(ObjB) + VARIANTDATA_OFFSET)
+
+            Dim i As Long
+            For i = 0 To FieldNameCount - 1
+                If Not EqualUdtCore(ObjARecord.GetField(ObjAPtr, FieldNames(i)), ObjARecord.GetField(ObjBPtr, FieldNames(i)), FieldNames(i)) Then
+'                    If mTypePath.Count = 0 Then
+'                        mTypePath.Push ObjARecord.GetField(ObjBPtr, FieldNames(i))
+'                        mTypePath.Push ObjARecord.GetField(ObjAPtr, FieldNames(i))
+'                    End If
+'
+'                    mTypePath.Push FieldNames(i)
+                    GoSub Finally
+                    Exit Function
+                End If
+            Next
+        End If
+        
+        EqualUdt = True
+    End If
+    
+    GoSub Finally
+    Exit Function
+    
+Catch:
+    GoSub Finally
+    Err.Raise Err.Number, Err.Source, Err.Description
+Finally:
+    ObjectPtr(ObjARecord) = vbNullPtr
+    ObjectPtr(ObjBRecord) = vbNullPtr
+    Return
+End Function
+
+Private Function EqualUdtCore(ByRef X As Variant, ByRef Y As Variant, ByRef FieldName As String) As Boolean
+    Dim Result As Boolean
+    
+    Result = EqualsCore(X, Y)
+    
+    If Not Result Then
+        If mTypePath.Count = 0 Then
+            mTypePath.Push Y
+            mTypePath.Push X
+        End If
+    
+        If VarType(X) = (vbArray Or vbUserDefinedType) Then
+            Dim Point As FailurePoint
+            
+            If mFailurePoints.Count > 0 Then
+                Set Point = mFailurePoints.Pop
+                mTypePath.Pop
+                mTypePath.Push FieldName & "(" & Point.Position & ")"
+            End If
+        Else
+            mTypePath.Push FieldName
+        End If
+    End If
+    
+    EqualUdtCore = Result
 End Function
 
 
